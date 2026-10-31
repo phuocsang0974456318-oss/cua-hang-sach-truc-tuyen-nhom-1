@@ -1,0 +1,675 @@
+openapi: 3.0.3
+info:
+  title: API Cửa hàng sách trực tuyến - Nhóm 1
+  version: 1.0.0
+  description: |
+    Thiết kế REST API cho website bán sách (Node.js + Express).
+    - Xác thực bằng session cookie (express-session), đăng nhập xong trình duyệt tự gửi cookie.
+    - Dữ liệu trao đổi dạng JSON.
+    - Phân quyền: USER < MANAGER < ADMIN.
+servers:
+  - url: http://localhost:3000/api/v1
+    description: Máy local
+tags:
+  - name: Auth
+    description: Đăng ký, đăng nhập
+  - name: Books
+    description: Sách và đánh giá
+  - name: Cart
+    description: Giỏ hàng (lưu trong session)
+  - name: Orders
+    description: Đặt hàng, lịch sử đơn
+  - name: Admin
+    description: Quản trị (MANAGER/ADMIN)
+
+paths:
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Đăng ký tài khoản
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, email, password]
+              properties:
+                name: { type: string, maxLength: 100, example: Nguyễn Văn A }
+                email: { type: string, format: email, example: a@example.com }
+                password: { type: string, minLength: 6, format: password, example: matkhau123 }
+      responses:
+        '201':
+          description: Tạo thành công
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '409':
+          description: Email đã tồn tại
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Đăng nhập
+      description: Thành công sẽ trả header Set-Cookie chứa session.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string, format: password }
+      responses:
+        '200':
+          description: Đăng nhập thành công
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401':
+          description: Sai email hoặc mật khẩu
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '403':
+          description: Tài khoản đã bị khóa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Đăng xuất
+      security: [{ cookieAuth: [] }]
+      responses:
+        '204': { description: Đã đăng xuất }
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Lấy thông tin người dùng đang đăng nhập
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /books:
+    get:
+      tags: [Books]
+      summary: Danh sách sách (tìm kiếm, lọc, phân trang)
+      parameters:
+        - name: q
+          in: query
+          description: Tìm theo tên sách, tác giả, thể loại
+          schema: { type: string }
+        - name: category
+          in: query
+          schema: { type: string, example: Lập trình }
+        - name: minPrice
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: maxPrice
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [newest, price_asc, price_desc, title]
+            default: newest
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 12 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Book' }
+                  page: { type: integer, example: 1 }
+                  limit: { type: integer, example: 12 }
+                  total: { type: integer, example: 1 }
+    post:
+      tags: [Books]
+      summary: Thêm sách mới (MANAGER/ADMIN)
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookInput' }
+      responses:
+        '201':
+          description: Đã tạo
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Book' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /books/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Books]
+      summary: Chi tiết một cuốn sách
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Book' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [Books]
+      summary: Cập nhật sách (MANAGER/ADMIN)
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/BookInput' }
+      responses:
+        '200':
+          description: Đã cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Book' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    delete:
+      tags: [Books]
+      summary: Xóa sách (ADMIN)
+      security: [{ cookieAuth: [] }]
+      responses:
+        '204': { description: Đã xóa }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /books/{id}/reviews:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Books]
+      summary: Danh sách đánh giá của một cuốn sách
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Review' }
+    post:
+      tags: [Books]
+      summary: Viết đánh giá (cần đăng nhập)
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rating]
+              properties:
+                rating: { type: integer, minimum: 1, maximum: 5, example: 5 }
+                comment: { type: string, maxLength: 1000, example: Sách dễ hiểu, rất hay. }
+      responses:
+        '201':
+          description: Đã tạo đánh giá
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Review' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /cart:
+    get:
+      tags: [Cart]
+      summary: Xem giỏ hàng
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+    delete:
+      tags: [Cart]
+      summary: Xóa toàn bộ giỏ hàng
+      responses:
+        '204': { description: Đã xóa }
+
+  /cart/items:
+    post:
+      tags: [Cart]
+      summary: Thêm sách vào giỏ
+      description: Nếu sách đã có trong giỏ thì cộng dồn số lượng.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [bookId]
+              properties:
+                bookId: { type: string, example: '1' }
+                quantity: { type: integer, minimum: 1, default: 1 }
+      responses:
+        '200':
+          description: Giỏ hàng sau khi thêm
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Số lượng vượt quá tồn kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /cart/items/{bookId}:
+    parameters:
+      - name: bookId
+        in: path
+        required: true
+        schema: { type: string }
+    patch:
+      tags: [Cart]
+      summary: Cập nhật số lượng (quantity = 0 thì xóa khỏi giỏ)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 0, example: 2 }
+      responses:
+        '200':
+          description: Giỏ hàng sau khi cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Số lượng vượt quá tồn kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Cart]
+      summary: Xóa một sách khỏi giỏ
+      responses:
+        '200':
+          description: Giỏ hàng sau khi xóa
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Cart' }
+
+  /orders:
+    get:
+      tags: [Orders]
+      summary: Lịch sử đơn hàng của tôi
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 50, default: 10 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items: { $ref: '#/components/schemas/Order' }
+                  page: { type: integer }
+                  total: { type: integer }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+    post:
+      tags: [Orders]
+      summary: Đặt hàng (checkout từ giỏ hàng)
+      description: Lấy sản phẩm từ giỏ hàng trong session, trừ tồn kho, tạo đơn và làm trống giỏ.
+      security: [{ cookieAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [fullName, phone, address, paymentMethod]
+              properties:
+                fullName: { type: string, example: Nguyễn Văn A }
+                phone: { type: string, pattern: '^0\d{9}$', example: '0901234567' }
+                address: { type: string, example: 12 Nguyễn Huệ, Quận 1, TP.HCM }
+                paymentMethod: { type: string, enum: [COD, BANK_TRANSFER] }
+                note: { type: string }
+      responses:
+        '201':
+          description: Đặt hàng thành công
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '400':
+          description: Giỏ hàng trống hoặc dữ liệu không hợp lệ
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '409':
+          description: Một sách không đủ tồn kho
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /orders/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IdPath'
+    get:
+      tags: [Orders]
+      summary: Chi tiết đơn hàng của tôi
+      security: [{ cookieAuth: [] }]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /orders/{id}/cancel:
+    post:
+      tags: [Orders]
+      summary: Hủy đơn hàng
+      description: Chỉ hủy được khi đơn đang PENDING. Tồn kho được hoàn lại.
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      responses:
+        '200':
+          description: Đã hủy
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Đơn không thể hủy ở trạng thái hiện tại
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /admin/users:
+    get:
+      tags: [Admin]
+      summary: Danh sách người dùng (ADMIN)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: role
+          in: query
+          schema: { $ref: '#/components/schemas/Role' }
+        - name: active
+          in: query
+          schema: { type: boolean }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/users/{id}:
+    patch:
+      tags: [Admin]
+      summary: Gán vai trò, khóa hoặc mở tài khoản (ADMIN)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                role: { $ref: '#/components/schemas/Role' }
+                active: { type: boolean }
+      responses:
+        '200':
+          description: Đã cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /admin/orders:
+    get:
+      tags: [Admin]
+      summary: Tất cả đơn hàng (MANAGER/ADMIN)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - name: status
+          in: query
+          schema: { $ref: '#/components/schemas/OrderStatus' }
+        - name: page
+          in: query
+          schema: { type: integer, minimum: 1, default: 1 }
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+
+  /admin/orders/{id}/status:
+    patch:
+      tags: [Admin]
+      summary: Cập nhật trạng thái đơn (MANAGER/ADMIN)
+      security: [{ cookieAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdPath'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { $ref: '#/components/schemas/OrderStatus' }
+      responses:
+        '200':
+          description: Đã cập nhật
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Order' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+components:
+  securitySchemes:
+    cookieAuth:
+      type: apiKey
+      in: cookie
+      name: connect.sid
+      description: Session cookie do express-session cấp sau khi đăng nhập.
+
+  parameters:
+    IdPath:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, example: '1' }
+
+  responses:
+    ValidationError:
+      description: Dữ liệu gửi lên không hợp lệ
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Unauthorized:
+      description: Chưa đăng nhập
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    Forbidden:
+      description: Không đủ quyền
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+    NotFound:
+      description: Không tìm thấy
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Error' }
+
+  schemas:
+    Error:
+      type: object
+      properties:
+        message: { type: string, example: Không tìm thấy dữ liệu. }
+        errors:
+          type: array
+          items:
+            type: object
+            properties:
+              field: { type: string }
+              message: { type: string }
+    Role:
+      type: string
+      enum: [USER, MANAGER, ADMIN]
+    OrderStatus:
+      type: string
+      enum: [PENDING, CONFIRMED, SHIPPING, COMPLETED, CANCELLED]
+    User:
+      type: object
+      properties:
+        id: { type: string, example: '1730000000000' }
+        name: { type: string }
+        email: { type: string, format: email }
+        role: { $ref: '#/components/schemas/Role' }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    Book:
+      type: object
+      properties:
+        id: { type: string, example: '1' }
+        title: { type: string, example: Lập trình Node.js căn bản }
+        author: { type: string, example: Nguyễn Văn A }
+        price: { type: integer, description: Đơn vị VND, example: 120000 }
+        category: { type: string, example: Lập trình }
+        image: { type: string, description: URL ảnh bìa }
+        description: { type: string }
+        stock: { type: integer, example: 10 }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    BookInput:
+      type: object
+      required: [title, author, price, stock]
+      properties:
+        title: { type: string }
+        author: { type: string }
+        price: { type: integer, minimum: 0 }
+        category: { type: string }
+        image: { type: string }
+        description: { type: string }
+        stock: { type: integer, minimum: 0 }
+        active: { type: boolean, default: true }
+    Review:
+      type: object
+      properties:
+        id: { type: string }
+        bookId: { type: string }
+        userName: { type: string }
+        rating: { type: integer, minimum: 1, maximum: 5 }
+        comment: { type: string }
+        createdAt: { type: string, format: date-time }
+    CartItem:
+      type: object
+      properties:
+        book:
+          type: object
+          properties:
+            id: { type: string }
+            title: { type: string }
+            author: { type: string }
+            price: { type: integer }
+            stock: { type: integer }
+        quantity: { type: integer }
+        subtotal: { type: integer }
+    Cart:
+      type: object
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CartItem' }
+        totalQuantity: { type: integer }
+        total: { type: integer, description: Tổng tiền VND }
+    OrderItem:
+      type: object
+      properties:
+        book: { type: string, description: Id sách }
+        title: { type: string }
+        price: { type: integer }
+        quantity: { type: integer }
+    Order:
+      type: object
+      properties:
+        id: { type: string }
+        user: { type: string, description: Id người đặt }
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OrderItem' }
+        total: { type: integer }
+        status: { $ref: '#/components/schemas/OrderStatus' }
+        paymentMethod: { type: string, enum: [COD, BANK_TRANSFER] }
+        fullName: { type: string }
+        phone: { type: string }
+        address: { type: string }
+        note: { type: string }
+        createdAt: { type: string, format: date-time }
